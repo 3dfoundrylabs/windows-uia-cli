@@ -15,13 +15,62 @@ A **Claude Code plugin** that provides Windows UI automation capabilities. It wr
 
 ## Installation
 
-Load as a Claude Code plugin during development:
+### Option 1: Dev mode (session only)
+
+Load the plugin for the current session:
 
 ```bash
 claude --plugin-dir <path-to-this-repo>
 ```
 
-The skill will appear as `windows-uia-cli:windows-ui-automation` and be auto-discovered by agents.
+### Option 2: Persistent (via local marketplace)
+
+This repo includes a `marketplace.json`, so it can be registered as a local marketplace. Add to your `~/.claude/settings.json`:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "3dfl-tools": {
+      "source": {
+        "source": "directory",
+        "path": "<absolute-path-to-this-repo>"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "windows-uia-cli@3dfl-tools": true
+  }
+}
+```
+
+### Option 3: Persistent (via Bitbucket)
+
+Register the Bitbucket repo as a marketplace source:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "3dfl-tools": {
+      "source": {
+        "source": "url",
+        "url": "https://bitbucket.org/3dfl/windows-uia-cli.git"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "windows-uia-cli@3dfl-tools": true
+  }
+}
+```
+
+Or interactively:
+
+```
+/plugin marketplace add https://bitbucket.org/3dfl/windows-uia-cli.git
+/plugin install windows-uia-cli@3dfl-tools
+```
+
+After installation, the skill appears as `windows-uia-cli:windows-ui-automation` and is auto-discovered by agents.
 
 ## Quick Start
 

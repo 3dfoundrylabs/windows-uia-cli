@@ -1,0 +1,13 @@
+{
+  "name": "3dfl-tools",
+  "owner": {
+    "name": "3dfl"
+  },
+  "plugins": [
+    {
+      "name": "windows-uia-cli",
+      "source": "./",
+      "description": "Zero-dependency Windows UI automation via persistent PowerShell UIA server"
+    }
+  ]
+}
