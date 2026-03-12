@@ -331,6 +331,115 @@ function Cmd-Click($a) {
     }
 }
 
+function Find-ElementFast($win, $a) {
+    # Try fast UIA FindFirst with PropertyCondition when possible (avoids full tree walk)
+    $conditions = [System.Collections.Generic.List[object]]::new()
+
+    if ($a.type) {
+        $ctProp = [System.Windows.Automation.AutomationElement]::ControlTypeProperty
+        $ctVal  = [System.Windows.Automation.ControlType]::$($a.type)
+        if ($ctVal) {
+            $conditions.Add((New-Object System.Windows.Automation.PropertyCondition($ctProp, $ctVal)))
+        }
+    }
+    if ($a.name) {
+        $nameProp = [System.Windows.Automation.AutomationElement]::NameProperty
+        $conditions.Add((New-Object System.Windows.Automation.PropertyCondition($nameProp, $a.name)))
+    }
+    if ($a.auto_id) {
+        $aidProp = [System.Windows.Automation.AutomationElement]::AutomationIdProperty
+        $conditions.Add((New-Object System.Windows.Automation.PropertyCondition($aidProp, $a.auto_id)))
+    }
+    if ($a.class_name) {
+        $clsProp = [System.Windows.Automation.AutomationElement]::ClassNameProperty
+        $conditions.Add((New-Object System.Windows.Automation.PropertyCondition($clsProp, $a.class_name)))
+    }
+
+    # Can only use fast path when we have exact-match conditions (no name_contains) and at least one condition
+    if ($conditions.Count -gt 0 -and -not $a.name_contains) {
+        if ($conditions.Count -eq 1) {
+            $cond = $conditions[0]
+        } else {
+            $cond = New-Object System.Windows.Automation.AndCondition($conditions.ToArray())
+        }
+        $el = $win.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+        return $el
+    }
+
+    # Fall back to manual tree walk for name_contains or complex filters
+    $maxDepth = if ($a.max_depth) { $a.max_depth } else { 15 }
+    $script:found = $null
+    function WalkFind($el, $depth) {
+        if ($script:found -or $depth -gt $maxDepth) { return }
+        $child = $walker.GetFirstChild($el)
+        while ($child -and -not $script:found) {
+            $ct   = $child.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
+            $name = $child.Current.Name
+            $aid  = $child.Current.AutomationId
+            $cls  = $child.Current.ClassName
+
+            $match = $true
+            if ($a.type -and $ct -ne $a.type) { $match = $false }
+            if ($a.name -and $name -ne $a.name) { $match = $false }
+            if ($a.name_contains -and $name -notlike "*$($a.name_contains)*") { $match = $false }
+            if ($a.auto_id -and $aid -ne $a.auto_id) { $match = $false }
+            if ($a.class_name -and $cls -ne $a.class_name) { $match = $false }
+
+            if ($match) { $script:found = $child; return }
+            WalkFind $child ($depth + 1)
+            $child = $walker.GetNextSibling($child)
+        }
+    }
+    WalkFind $win 0
+    return $script:found
+}
+
+function Cmd-ClickElement($a) {
+    if (-not $a.window) { return @{ ok = $false; error = "'window' is required" } }
+    $offset_x = if ($a.offset_x) { [int]$a.offset_x } else { 0 }
+    $offset_y = if ($a.offset_y) { [int]$a.offset_y } else { 0 }
+
+    $win = Find-Window $a.window
+    if (-not $win) { return @{ ok = $false; error = "Window '$($a.window)' not found" } }
+
+    $stopwatch.Restart()
+    $found = Find-ElementFast $win $a
+
+    if (-not $found) {
+        return @{ ok = $false; error = 'Element not found'; time_s = [math]::Round($stopwatch.Elapsed.TotalSeconds, 4) }
+    }
+
+    $rect = $found.Current.BoundingRectangle
+    $cx = [int](($rect.Left + $rect.Right) / 2) + $offset_x
+    $cy = [int](($rect.Top + $rect.Bottom) / 2) + $offset_y
+    $double = [bool]$a.double
+
+    if ($double) {
+        [NativeInput]::DoubleClickAt($cx, $cy)
+    } else {
+        [NativeInput]::ClickAt($cx, $cy)
+    }
+    $elapsed = $stopwatch.Elapsed.TotalSeconds
+
+    # Return trimmed element info (no class, value, value_readonly, depth — agent doesn't need them after clicking)
+    $rect = Rect-To-Hash $found.Current.BoundingRectangle
+    $elTrimmed = @{
+        name    = $found.Current.Name
+        type    = $found.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
+        auto_id = $found.Current.AutomationId
+        rect    = $rect
+        enabled = $found.Current.IsEnabled
+    }
+    return @{
+        ok      = $true
+        time_s  = [math]::Round($elapsed, 4)
+        x       = $cx
+        y       = $cy
+        double  = $double
+        element = $elTrimmed
+    }
+}
+
 function Cmd-Screenshot($a) {
     $path = $a.path
     if (-not $path) {
@@ -433,6 +542,7 @@ try {
                     'find_elements' { $response = Cmd-FindElements $a }
                     'set_value'     { $response = Cmd-SetValue $a }
                     'click'         { $response = Cmd-Click $a }
+                    'click_element' { $response = Cmd-ClickElement $a }
                     'screenshot'    { $response = Cmd-Screenshot $a }
                     'type'          { $response = Cmd-Type $a }
                     'quit'          {

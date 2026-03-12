@@ -303,6 +303,61 @@ Click at absolute screen coordinates using native SendInput.
 
 ---
 
+## click_element
+
+Find an element by filters and click its center — combines `find_elements` + `click` in one call. Accepts the same filter args as `find_elements`. Clicks the first matching element.
+
+**Request:**
+```json
+{"cmd": "click_element", "args": {"window": "My App", "name": "Save", "type": "Button"}}
+```
+
+**Request (with offset — e.g., click checkbox area at left edge):**
+```json
+{"cmd": "click_element", "args": {"window": "My App", "type": "ListItem", "name_contains": "file.mp4", "offset_x": -100}}
+```
+
+**Response:**
+```json
+{
+  "ok": true,
+  "time_s": 0.0523,
+  "x": 450,
+  "y": 300,
+  "double": false,
+  "element": {
+    "name": "Save",
+    "type": "Button",
+    "class": "Button",
+    "auto_id": "btn_save",
+    "depth": 0,
+    "rect": {"left": 400, "top": 280, "right": 500, "bottom": 320},
+    "enabled": true
+  }
+}
+```
+
+**Args:**
+| Arg | Type | Required | Default | Description |
+|-----|------|----------|---------|-------------|
+| `window` | string | yes | - | Exact window title |
+| `type` | string | no | - | Control type filter |
+| `name` | string | no | - | Exact name filter |
+| `name_contains` | string | no | - | Substring name filter |
+| `auto_id` | string | no | - | AutomationId filter |
+| `class_name` | string | no | - | ClassName filter |
+| `offset_x` | int | no | 0 | X offset from element center |
+| `offset_y` | int | no | 0 | Y offset from element center |
+| `double` | bool | no | false | Double-click if true |
+| `max_depth` | int | no | 15 | Maximum search depth |
+
+**Error (not found):**
+```json
+{"ok": false, "error": "Element not found", "time_s": 0.0342}
+```
+
+---
+
 ## screenshot
 
 Capture the primary screen to a PNG file.

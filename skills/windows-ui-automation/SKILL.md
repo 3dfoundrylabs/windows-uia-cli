@@ -69,9 +69,20 @@ powershell ... '{"cmd":"find_elements","args":{"window":"My App","name_contains"
 powershell ... '{"cmd":"find_elements","args":{"window":"My App","auto_id":"slider_brightness"}}'
 ```
 
+### click_element — Find and Click in One Call (preferred)
+
+Find an element by filters and click its center. This is the **fastest way to click** — uses native UIA FindFirst (not tree walk) when possible:
+
+```bash
+powershell ... '{"cmd":"click_element","args":{"window":"My App","name":"Save","type":"Button"}}'
+powershell ... '{"cmd":"click_element","args":{"window":"My App","type":"ListItem","name_contains":"file.mp4","offset_x":-100}}'
+```
+
+Accepts all `find_elements` filters plus `offset_x`/`offset_y` (relative to center) and `double` (for double-click). Returns the matched element info alongside the click coordinates.
+
 ### click — Click at Coordinates
 
-Click at screen coordinates. Supports double-click:
+Click at screen coordinates. Use when you already know the coordinates:
 
 ```bash
 powershell ... '{"cmd":"click","args":{"x":500,"y":300}}'
@@ -112,13 +123,14 @@ If `path` is omitted, saves to `%TEMP%/uia_screenshot.png`.
 
 ## Key Patterns
 
-### Find Then Click
+### Click an Element
 
-Use `find_elements` to locate an element, compute its center from the bounding rect, then `click`:
+**Preferred**: Use `click_element` — finds and clicks in one call, uses fast UIA FindFirst:
+```bash
+powershell ... '{"cmd":"click_element","args":{"window":"My App","name":"OK","type":"Button"}}'
+```
 
-1. Find the element: `find_elements` with appropriate filters
-2. From the result's `rect` (`left`, `top`, `right`, `bottom`), compute center: `x = (left + right) / 2`, `y = (top + bottom) / 2`
-3. Click at the center coordinates
+**Fallback**: Use `find_elements` → compute center from `rect` → `click` when you need the element details first or `click_element` can't handle the search criteria.
 
 ### Set Slider Value
 
