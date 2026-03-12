@@ -246,7 +246,7 @@ function Cmd-SetValue($a) {
     $win = Find-Window $a.window
     if (-not $win) { return @{ ok = $false; error = "Window '$($a.window)' not found" } }
 
-    $target = $null
+    $script:target = $null
     function FindTarget($el, $depth) {
         if ($script:target -or $depth -gt $maxDepth) { return }
         $child = $walker.GetFirstChild($el)
@@ -255,6 +255,7 @@ function Cmd-SetValue($a) {
             $aid  = $child.Current.AutomationId
             $ct   = $child.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
             $match = $true
+            if (-not $child.Current.IsEnabled) { $match = $false }
             if ($a.type -and $ct -ne $a.type) { $match = $false }
             if ($a.name -and $name -ne $a.name) { $match = $false }
             if ($a.auto_id -and $aid -ne $a.auto_id) { $match = $false }
