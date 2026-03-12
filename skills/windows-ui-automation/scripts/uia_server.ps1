@@ -1,9 +1,9 @@
-# Persistent UIA automation server — reads JSON commands from stdin, writes JSON responses to stdout.
+# Persistent UIA automation server — communicates via named pipe transport.
 # Zero dependencies: uses only built-in .NET assemblies available on all Windows 10/11 systems.
 #
-# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File uia_server.ps1
+# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File uia_server.ps1 [--pipe-name <name>]
 #
-# Protocol: newline-delimited JSON (one JSON object per line).
+# Protocol: newline-delimited JSON (one JSON object per line) over named pipe.
 # Request:  {"cmd": "...", "args": {...}}
 # Response: {"ok": true, ...} or {"ok": false, "error": "..."}
 
@@ -367,58 +367,97 @@ function Cmd-Type($a) {
     return @{ ok = $true; time_s = [math]::Round($elapsed, 4) }
 }
 
-# ── Main loop ──
-$reader = [System.IO.StreamReader]::new([Console]::OpenStandardInput())
-
-# Signal ready
-$ready = @{ ok = $true; msg = 'ready' } | ConvertTo-Json -Compress
-[Console]::Out.WriteLine($ready)
-[Console]::Out.Flush()
-
-while ($true) {
-    $line = $reader.ReadLine()
-    if ($null -eq $line) { break }  # stdin closed
-    $line = $line.Trim()
-    if ($line -eq '') { continue }
-
-    try {
-        $req = $line | ConvertFrom-Json
-    } catch {
-        $err = @{ ok = $false; error = "Invalid JSON: $_" } | ConvertTo-Json -Compress
-        [Console]::Out.WriteLine($err)
-        [Console]::Out.Flush()
-        continue
+# ── Parse arguments ──
+$pipeName = 'uia-server'
+for ($i = 0; $i -lt $args.Count; $i++) {
+    if ($args[$i] -eq '--pipe-name' -and ($i + 1) -lt $args.Count) {
+        $pipeName = $args[$i + 1]
+        $i++
     }
+}
 
-    $cmd = $req.cmd
-    $a   = $req.args
-    if (-not $a) { $a = @{} }
+# ── Write PID file ──
+$pidFile = [System.IO.Path]::Combine($env:TEMP, "$pipeName.pid")
+[System.IO.File]::WriteAllText($pidFile, "$PID")
 
-    $response = $null
-    try {
-        switch ($cmd) {
-            'ping'          { $response = Cmd-Ping $a }
-            'list_windows'  { $response = Cmd-ListWindows $a }
-            'find_window'   { $response = Cmd-FindWindow $a }
-            'tree_walk'     { $response = Cmd-TreeWalk $a }
-            'find_elements' { $response = Cmd-FindElements $a }
-            'set_value'     { $response = Cmd-SetValue $a }
-            'click'         { $response = Cmd-Click $a }
-            'screenshot'    { $response = Cmd-Screenshot $a }
-            'type'          { $response = Cmd-Type $a }
-            'quit'          {
-                $quit = @{ ok = $true; msg = 'bye' } | ConvertTo-Json -Compress
-                [Console]::Out.WriteLine($quit)
-                [Console]::Out.Flush()
-                exit 0
+# ── Main loop (named pipe transport) ──
+try {
+    while ($true) {
+        $pipe = [System.IO.Pipes.NamedPipeServerStream]::new(
+            $pipeName,
+            [System.IO.Pipes.PipeDirection]::InOut
+        )
+
+        try {
+            $pipe.WaitForConnection()
+
+            $reader = [System.IO.StreamReader]::new($pipe)
+            $writer = [System.IO.StreamWriter]::new($pipe)
+            $writer.AutoFlush = $false
+
+            $line = $reader.ReadLine()
+            if ($null -eq $line) {
+                $pipe.Disconnect()
+                $pipe.Dispose()
+                continue
             }
-            default         { $response = @{ ok = $false; error = "Unknown command: $cmd" } }
-        }
-    } catch {
-        $response = @{ ok = $false; error = $_.Exception.Message }
-    }
+            $line = $line.Trim()
+            if ($line -eq '') {
+                $pipe.Disconnect()
+                $pipe.Dispose()
+                continue
+            }
 
-    $json = $response | ConvertTo-Json -Depth 10 -Compress
-    [Console]::Out.WriteLine($json)
-    [Console]::Out.Flush()
+            try {
+                $req = $line | ConvertFrom-Json
+            } catch {
+                $err = @{ ok = $false; error = "Invalid JSON: $_" } | ConvertTo-Json -Compress
+                $writer.WriteLine($err)
+                $writer.Flush()
+                $pipe.Disconnect()
+                $pipe.Dispose()
+                continue
+            }
+
+            $cmd = $req.cmd
+            $a   = $req.args
+            if (-not $a) { $a = @{} }
+
+            $response = $null
+            try {
+                switch ($cmd) {
+                    'ping'          { $response = Cmd-Ping $a }
+                    'list_windows'  { $response = Cmd-ListWindows $a }
+                    'find_window'   { $response = Cmd-FindWindow $a }
+                    'tree_walk'     { $response = Cmd-TreeWalk $a }
+                    'find_elements' { $response = Cmd-FindElements $a }
+                    'set_value'     { $response = Cmd-SetValue $a }
+                    'click'         { $response = Cmd-Click $a }
+                    'screenshot'    { $response = Cmd-Screenshot $a }
+                    'type'          { $response = Cmd-Type $a }
+                    'quit'          {
+                        $quit = @{ ok = $true; msg = 'bye' } | ConvertTo-Json -Compress
+                        $writer.WriteLine($quit)
+                        $writer.Flush()
+                        $pipe.Disconnect()
+                        $pipe.Dispose()
+                        if (Test-Path $pidFile) { Remove-Item $pidFile -Force }
+                        exit 0
+                    }
+                    default         { $response = @{ ok = $false; error = "Unknown command: $cmd" } }
+                }
+            } catch {
+                $response = @{ ok = $false; error = $_.Exception.Message }
+            }
+
+            $json = $response | ConvertTo-Json -Depth 10 -Compress
+            $writer.WriteLine($json)
+            $writer.Flush()
+            $pipe.Disconnect()
+        } finally {
+            $pipe.Dispose()
+        }
+    }
+} finally {
+    if (Test-Path $pidFile) { Remove-Item $pidFile -Force }
 }

@@ -1,0 +1,7 @@
+{
+  "name": "windows-uia-cli",
+  "version": "0.1.0",
+  "description": "Zero-dependency Windows UI automation via persistent PowerShell UIA server",
+  "author": { "name": "3dfl" },
+  "repository": "https://bitbucket.org/3dfl/windows-uia-cli"
+}
