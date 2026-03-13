@@ -2,6 +2,8 @@
 
 A **Claude Code plugin** that provides Windows UI automation capabilities. It wraps the Windows UI Automation (UIA) framework behind a simple JSON CLI, powered by a persistent PowerShell background server with zero dependencies.
 
+![Demo: Automating Notepad++ and Calculator from Claude Code](scripts/demo.gif)
+
 ## What's Included
 
 - **Skill** (`skills/windows-ui-automation/`) — auto-discovered by Claude Code agents, teaches them how to use the CLI
