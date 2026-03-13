@@ -59,12 +59,12 @@ Returns an array of elements, each with `name`, `type`, `auto_id`, `rect`, `clas
 
 ### find_elements — Search for Specific Elements
 
-Search by any combination of `type`, `name`, `name_contains`, `auto_id`, `class_name`:
+Search by any combination of `type`, `name`, `name_contains`, `auto_id`, `auto_id_contains`, `class_name`:
 
 ```bash
 $UIA '{"cmd":"find_elements","args":{"window":"My App","type":"Button"}}'
 $UIA '{"cmd":"find_elements","args":{"window":"My App","name_contains":"Save"}}'
-$UIA '{"cmd":"find_elements","args":{"window":"My App","auto_id":"slider_brightness"}}'
+$UIA '{"cmd":"find_elements","args":{"window":"My App","auto_id_contains":"volumeSlider","type":"Slider"}}'
 ```
 
 ### click_element — Find and Click in One Call (preferred)
@@ -97,21 +97,36 @@ $UIA '{"cmd":"type","args":{"text":"^s"}}'  # Ctrl+S
 
 ### set_value — Set Slider/Input Values Directly
 
-Set values on elements that support the UIA ValuePattern or RangeValuePattern. Identify the target by `name`, `auto_id`, and/or `type`:
+Set values on elements that support the UIA ValuePattern or RangeValuePattern. Identify the target by `name`, `auto_id`, `auto_id_contains`, and/or `type`:
 
 ```bash
-$UIA '{"cmd":"set_value","args":{"window":"My App","auto_id":"slider_brightness","value":75}}'
+$UIA '{"cmd":"set_value","args":{"window":"My App","auto_id_contains":"volumeSlider","value":75}}'
 $UIA '{"cmd":"set_value","args":{"window":"My App","name":"Volume","type":"Slider","value":50}}'
 ```
 
 This is far more reliable than click-dragging sliders. It sets the value programmatically via UIA patterns.
 
+### toggle — Toggle Checkbox/Toggle Elements
+
+Toggle elements that support TogglePattern (checkboxes, toggle buttons, ListItems with checkboxes). Uses the same filters as `click_element`:
+
+```bash
+$UIA '{"cmd":"toggle","args":{"window":"My App","type":"ListItem","name_contains":"file.mp4"}}'
+$UIA '{"cmd":"toggle","args":{"window":"My App","auto_id_contains":"enableNotifications"}}'
+```
+
+Returns `old_state` and `new_state` (On/Off/Indeterminate). If the element doesn't support TogglePattern natively, falls back to clicking the element's left edge (where checkboxes typically are).
+
 ### screenshot — Capture Screen
+
+Capture the full screen or a specific window:
 
 ```bash
 $UIA '{"cmd":"screenshot"}'
-# Saves to %TEMP%/uia_screenshot.png by default. Then use Read tool on the path to view the image.
+$UIA '{"cmd":"screenshot","args":{"window":"My App"}}'
 ```
+
+When `window` is provided, uses the Win32 PrintWindow API to capture only that window (works even if partially obscured, produces smaller files). Without `window`, captures the full primary screen. Saves to `%TEMP%/uia_screenshot.png` by default. Use Read tool on the returned path to view the image.
 
 ## Key Patterns
 

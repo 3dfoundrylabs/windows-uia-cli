@@ -15,7 +15,7 @@ Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 
-# ── Native SendInput for clicking ──
+# ── Native SendInput for clicking + PrintWindow for screenshots ──
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -62,6 +62,20 @@ public class NativeInput {
         inputs[2].type = 0; inputs[2].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
         inputs[3].type = 0; inputs[3].mi.dwFlags = MOUSEEVENTF_LEFTUP;
         SendInput(4, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    // PrintWindow for window-scoped screenshots
+    [DllImport("user32.dll")]
+    public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
+
+    public const uint PW_RENDERFULLCONTENT = 0x00000002;
+
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(IntPtr hwnd, out RECT lpRect);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT {
+        public int Left, Top, Right, Bottom;
     }
 }
 "@
@@ -216,6 +230,7 @@ function Cmd-FindElements($a) {
             if ($a.name -and $name -ne $a.name) { $match = $false }
             if ($a.name_contains -and $name -notlike "*$($a.name_contains)*") { $match = $false }
             if ($a.auto_id -and $aid -ne $a.auto_id) { $match = $false }
+            if ($a.auto_id_contains -and $aid -notlike "*$($a.auto_id_contains)*") { $match = $false }
             if ($a.class_name -and $cls -ne $a.class_name) { $match = $false }
 
             if ($match) {
@@ -259,6 +274,7 @@ function Cmd-SetValue($a) {
             if ($a.type -and $ct -ne $a.type) { $match = $false }
             if ($a.name -and $name -ne $a.name) { $match = $false }
             if ($a.auto_id -and $aid -ne $a.auto_id) { $match = $false }
+            if ($a.auto_id_contains -and $aid -notlike "*$($a.auto_id_contains)*") { $match = $false }
             if ($match) { $script:target = $child; return }
             FindTarget $child ($depth + 1)
             $child = $walker.GetNextSibling($child)
@@ -355,8 +371,8 @@ function Find-ElementFast($win, $a) {
         $conditions.Add((New-Object System.Windows.Automation.PropertyCondition($clsProp, $a.class_name)))
     }
 
-    # Can only use fast path when we have exact-match conditions (no name_contains) and at least one condition
-    if ($conditions.Count -gt 0 -and -not $a.name_contains) {
+    # Can only use fast path when we have exact-match conditions (no name/auto_id_contains) and at least one condition
+    if ($conditions.Count -gt 0 -and -not $a.name_contains -and -not $a.auto_id_contains) {
         if ($conditions.Count -eq 1) {
             $cond = $conditions[0]
         } else {
@@ -383,6 +399,7 @@ function Find-ElementFast($win, $a) {
             if ($a.name -and $name -ne $a.name) { $match = $false }
             if ($a.name_contains -and $name -notlike "*$($a.name_contains)*") { $match = $false }
             if ($a.auto_id -and $aid -ne $a.auto_id) { $match = $false }
+            if ($a.auto_id_contains -and $aid -notlike "*$($a.auto_id_contains)*") { $match = $false }
             if ($a.class_name -and $cls -ne $a.class_name) { $match = $false }
 
             if ($match) { $script:found = $child; return }
@@ -440,16 +457,126 @@ function Cmd-ClickElement($a) {
     }
 }
 
+function Cmd-Toggle($a) {
+    if (-not $a.window) { return @{ ok = $false; error = "'window' is required" } }
+    $maxDepth = if ($a.max_depth) { $a.max_depth } else { 15 }
+
+    $win = Find-Window $a.window
+    if (-not $win) { return @{ ok = $false; error = "Window '$($a.window)' not found" } }
+
+    $stopwatch.Restart()
+    $found = Find-ElementFast $win $a
+
+    if (-not $found) {
+        return @{ ok = $false; error = 'Element not found'; time_s = [math]::Round($stopwatch.Elapsed.TotalSeconds, 4) }
+    }
+
+    # Try TogglePattern
+    $oldState = $null
+    try {
+        $tp = $found.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+        if ($tp) {
+            $oldState = $tp.Current.ToggleState.ToString()
+            $tp.Toggle()
+            Start-Sleep -Milliseconds 100
+            $newState = $tp.Current.ToggleState.ToString()
+            # If state actually changed, return success
+            if ($newState -ne $oldState) {
+                $elapsed = $stopwatch.Elapsed.TotalSeconds
+                return @{
+                    ok        = $true
+                    time_s    = [math]::Round($elapsed, 4)
+                    old_state = $oldState
+                    new_state = $newState
+                    element   = @{
+                        name    = $found.Current.Name
+                        type    = $found.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
+                        auto_id = $found.Current.AutomationId
+                    }
+                }
+            }
+            # State didn't change — Toggle() is read-only, fall through to click
+        }
+    } catch {}
+
+    # Fallback: click at left edge of element (where checkbox typically is in ListItems)
+    $rect = $found.Current.BoundingRectangle
+    $cy = [int](($rect.Top + $rect.Bottom) / 2)
+    # Click near left edge — checkbox is typically at the start of the item
+    $cx = [int]$rect.Left + 15
+    [NativeInput]::ClickAt($cx, $cy)
+    Start-Sleep -Milliseconds 200
+
+    # Read toggle_state after click if available
+    $newState = $null
+    try {
+        $tp2 = $found.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+        if ($tp2) { $newState = $tp2.Current.ToggleState.ToString() }
+    } catch {}
+
+    $elapsed = $stopwatch.Elapsed.TotalSeconds
+    return @{
+        ok        = $true
+        time_s    = [math]::Round($elapsed, 4)
+        fallback  = 'click_checkbox'
+        old_state = $oldState
+        new_state = $newState
+        element   = @{
+            name    = $found.Current.Name
+            type    = $found.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
+            auto_id = $found.Current.AutomationId
+        }
+    }
+}
+
 function Cmd-Screenshot($a) {
     $path = $a.path
     if (-not $path) {
         $path = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'uia_screenshot.png')
     }
 
+    $stopwatch.Restart()
+
+    if ($a.window) {
+        # Window-scoped screenshot via PrintWindow API
+        $win = Find-Window $a.window
+        if (-not $win) { return @{ ok = $false; error = "Window '$($a.window)' not found" } }
+
+        $hwnd = [IntPtr]$win.Current.NativeWindowHandle
+        $winRect = New-Object NativeInput+RECT
+        [NativeInput]::GetWindowRect($hwnd, [ref]$winRect) | Out-Null
+
+        $w = $winRect.Right - $winRect.Left
+        $h = $winRect.Bottom - $winRect.Top
+        if ($w -le 0 -or $h -le 0) {
+            return @{ ok = $false; error = "Window has zero/negative dimensions: ${w}x${h}" }
+        }
+
+        $bmp = New-Object System.Drawing.Bitmap($w, $h)
+        $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+        $hdc = $gfx.GetHdc()
+        [NativeInput]::PrintWindow($hwnd, $hdc, [NativeInput]::PW_RENDERFULLCONTENT) | Out-Null
+        $gfx.ReleaseHdc($hdc)
+        $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+        $gfx.Dispose()
+        $bmp.Dispose()
+        $elapsed = $stopwatch.Elapsed.TotalSeconds
+
+        $fileSize = (Get-Item $path).Length
+        return @{
+            ok           = $true
+            time_s       = [math]::Round($elapsed, 4)
+            path         = $path
+            resolution   = "${w}x${h}"
+            file_size_kb = [math]::Round($fileSize / 1024, 1)
+            window       = $a.window
+        }
+    }
+
+    # Full-screen screenshot (default)
     $screen = [System.Windows.Forms.Screen]::PrimaryScreen
     $bounds = $screen.Bounds
 
-    $stopwatch.Restart()
     $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
     $gfx = [System.Drawing.Graphics]::FromImage($bmp)
     $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
@@ -543,6 +670,7 @@ try {
                     'set_value'     { $response = Cmd-SetValue $a }
                     'click'         { $response = Cmd-Click $a }
                     'click_element' { $response = Cmd-ClickElement $a }
+                    'toggle'        { $response = Cmd-Toggle $a }
                     'screenshot'    { $response = Cmd-Screenshot $a }
                     'type'          { $response = Cmd-Type $a }
                     'quit'          {
