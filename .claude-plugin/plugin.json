@@ -3,5 +3,8 @@
   "version": "0.2.0",
   "description": "Zero-dependency Windows UI automation via persistent PowerShell UIA server",
   "author": { "name": "3D Foundry Labs", "url": "https://3dfoundry.ai" },
-  "repository": "https://github.com/3dfoundrylabs/windows-uia-cli"
+  "repository": "https://github.com/3dfoundrylabs/windows-uia-cli",
+  "license": "MIT",
+  "homepage": "https://github.com/3dfoundrylabs/windows-uia-cli",
+  "keywords": ["windows", "ui-automation", "desktop", "testing", "qa", "powershell", "uia"]
 }
