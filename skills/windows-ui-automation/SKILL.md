@@ -7,13 +7,17 @@ description: Interact with Windows desktop UI — click, type, find elements, re
 
 Automate any Windows desktop application using the UIA CLI. This tool wraps the Windows UI Automation framework behind a simple JSON command interface, powered by a persistent background PowerShell server.
 
-## How to Call
+## Quick Setup
 
-Use the Bash tool to invoke the CLI:
+Run this once at the start of your session to set up shorthand variables:
 
 ```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_SKILL_DIR}/scripts/uia_cli.ps1" '{"cmd":"ping"}'
+UIA="powershell -NoProfile -ExecutionPolicy Bypass -File ${CLAUDE_SKILL_DIR}/scripts/uia_cli.ps1"
+UIA_TYPE="${CLAUDE_SKILL_DIR}/scripts/uia_type.ps1"
+$UIA '{"cmd":"ping"}'
 ```
+
+Then use `$UIA '{"cmd":"..."}'` for all subsequent calls.
 
 The CLI auto-starts the UIA server on the first call (takes ~1 second for .NET assembly loading). Subsequent calls reuse the running server and complete in ~5ms.
 
@@ -23,28 +27,22 @@ All commands return JSON with an `"ok": true/false` field. On failure, an `"erro
 
 ### ping — Health Check
 
-Verify the server is running:
-
 ```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_SKILL_DIR}/scripts/uia_cli.ps1" '{"cmd":"ping"}'
+$UIA '{"cmd":"ping"}'
 # => {"ok":true,"msg":"pong"}
 ```
 
 ### list_windows — Discover Open Windows
 
-List all top-level windows with names:
-
 ```bash
-powershell ... '{"cmd":"list_windows"}'
-# => {"ok":true,"count":5,"windows":[{"name":"Untitled - Notepad","class":"Notepad",...},...]}}
+$UIA '{"cmd":"list_windows"}'
+# => {"ok":true,"count":5,"windows":[{"name":"Untitled - Notepad","class":"Notepad",...},...]}
 ```
 
 ### find_window — Find a Specific Window
 
-Find a window by its exact title:
-
 ```bash
-powershell ... '{"cmd":"find_window","args":{"name":"Untitled - Notepad"}}'
+$UIA '{"cmd":"find_window","args":{"name":"Untitled - Notepad"}}'
 # => {"ok":true,"element":{"name":"Untitled - Notepad","type":"Window",...}}
 ```
 
@@ -53,8 +51,8 @@ powershell ... '{"cmd":"find_window","args":{"name":"Untitled - Notepad"}}'
 Get all UI elements in a window. Use `type_filter` to limit to specific control types and `max_depth` to control traversal depth:
 
 ```bash
-powershell ... '{"cmd":"tree_walk","args":{"window":"Untitled - Notepad"}}'
-powershell ... '{"cmd":"tree_walk","args":{"window":"Untitled - Notepad","type_filter":["Button","Slider"],"max_depth":5}}'
+$UIA '{"cmd":"tree_walk","args":{"window":"Untitled - Notepad"}}'
+$UIA '{"cmd":"tree_walk","args":{"window":"Untitled - Notepad","type_filter":["Button","Slider"],"max_depth":5}}'
 ```
 
 Returns an array of elements, each with `name`, `type`, `auto_id`, `rect`, `class`, `depth`, `enabled`, and pattern info (value, range_value, toggle_state) where applicable.
@@ -64,9 +62,9 @@ Returns an array of elements, each with `name`, `type`, `auto_id`, `rect`, `clas
 Search by any combination of `type`, `name`, `name_contains`, `auto_id`, `class_name`:
 
 ```bash
-powershell ... '{"cmd":"find_elements","args":{"window":"My App","type":"Button"}}'
-powershell ... '{"cmd":"find_elements","args":{"window":"My App","name_contains":"Save"}}'
-powershell ... '{"cmd":"find_elements","args":{"window":"My App","auto_id":"slider_brightness"}}'
+$UIA '{"cmd":"find_elements","args":{"window":"My App","type":"Button"}}'
+$UIA '{"cmd":"find_elements","args":{"window":"My App","name_contains":"Save"}}'
+$UIA '{"cmd":"find_elements","args":{"window":"My App","auto_id":"slider_brightness"}}'
 ```
 
 ### click_element — Find and Click in One Call (preferred)
@@ -74,19 +72,17 @@ powershell ... '{"cmd":"find_elements","args":{"window":"My App","auto_id":"slid
 Find an element by filters and click its center. This is the **fastest way to click** — uses native UIA FindFirst (not tree walk) when possible:
 
 ```bash
-powershell ... '{"cmd":"click_element","args":{"window":"My App","name":"Save","type":"Button"}}'
-powershell ... '{"cmd":"click_element","args":{"window":"My App","type":"ListItem","name_contains":"file.mp4","offset_x":-100}}'
+$UIA '{"cmd":"click_element","args":{"window":"My App","name":"Save","type":"Button"}}'
+$UIA '{"cmd":"click_element","args":{"window":"My App","type":"ListItem","name_contains":"file.mp4","offset_x":-100}}'
 ```
 
 Accepts all `find_elements` filters plus `offset_x`/`offset_y` (relative to center) and `double` (for double-click). Returns the matched element info alongside the click coordinates.
 
 ### click — Click at Coordinates
 
-Click at screen coordinates. Use when you already know the coordinates:
-
 ```bash
-powershell ... '{"cmd":"click","args":{"x":500,"y":300}}'
-powershell ... '{"cmd":"click","args":{"x":500,"y":300,"double":true}}'
+$UIA '{"cmd":"click","args":{"x":500,"y":300}}'
+$UIA '{"cmd":"click","args":{"x":500,"y":300,"double":true}}'
 ```
 
 ### type — Send Keystrokes
@@ -94,9 +90,9 @@ powershell ... '{"cmd":"click","args":{"x":500,"y":300,"double":true}}'
 Send keystrokes using .NET SendKeys syntax. Special keys use braces: `{ENTER}`, `{TAB}`, `{ESC}`, `{BACKSPACE}`, `{DELETE}`, `{UP}`, `{DOWN}`, `{LEFT}`, `{RIGHT}`, `{F1}`-`{F12}`. Modifiers: `+` (Shift), `^` (Ctrl), `%` (Alt).
 
 ```bash
-powershell ... '{"cmd":"type","args":{"text":"Hello World"}}'
-powershell ... '{"cmd":"type","args":{"text":"{ENTER}"}}'
-powershell ... '{"cmd":"type","args":{"text":"^s"}}'  # Ctrl+S
+$UIA '{"cmd":"type","args":{"text":"Hello World"}}'
+$UIA '{"cmd":"type","args":{"text":"{ENTER}"}}'
+$UIA '{"cmd":"type","args":{"text":"^s"}}'  # Ctrl+S
 ```
 
 ### set_value — Set Slider/Input Values Directly
@@ -104,22 +100,18 @@ powershell ... '{"cmd":"type","args":{"text":"^s"}}'  # Ctrl+S
 Set values on elements that support the UIA ValuePattern or RangeValuePattern. Identify the target by `name`, `auto_id`, and/or `type`:
 
 ```bash
-powershell ... '{"cmd":"set_value","args":{"window":"My App","auto_id":"slider_brightness","value":75}}'
-powershell ... '{"cmd":"set_value","args":{"window":"My App","name":"Volume","type":"Slider","value":50}}'
+$UIA '{"cmd":"set_value","args":{"window":"My App","auto_id":"slider_brightness","value":75}}'
+$UIA '{"cmd":"set_value","args":{"window":"My App","name":"Volume","type":"Slider","value":50}}'
 ```
 
 This is far more reliable than click-dragging sliders. It sets the value programmatically via UIA patterns.
 
 ### screenshot — Capture Screen
 
-Capture the primary screen to a PNG file. Use the Read tool to view the image:
-
 ```bash
-powershell ... '{"cmd":"screenshot"}'
+$UIA '{"cmd":"screenshot"}'
 # Saves to %TEMP%/uia_screenshot.png by default. Then use Read tool on the path to view the image.
 ```
-
-If `path` is omitted, saves to `%TEMP%/uia_screenshot.png`.
 
 ## Key Patterns
 
@@ -127,7 +119,7 @@ If `path` is omitted, saves to `%TEMP%/uia_screenshot.png`.
 
 **Preferred**: Use `click_element` — finds and clicks in one call, uses fast UIA FindFirst:
 ```bash
-powershell ... '{"cmd":"click_element","args":{"window":"My App","name":"OK","type":"Button"}}'
+$UIA '{"cmd":"click_element","args":{"window":"My App","name":"OK","type":"Button"}}'
 ```
 
 **Fallback**: Use `find_elements` → compute center from `rect` → `click` when you need the element details first or `click_element` can't handle the search criteria.
@@ -135,10 +127,6 @@ powershell ... '{"cmd":"click_element","args":{"window":"My App","name":"OK","ty
 ### Set Slider Value
 
 Do not try to click-drag sliders. Use `set_value` with the slider's `auto_id` or `name` to set its value directly via UIA patterns. This is instant and precise.
-
-### Verify State After Actions
-
-After performing an action (clicking a button, setting a value), use `tree_walk` or `find_elements` to confirm the state changed as expected. This is especially important for toggle buttons and checkboxes -- check the `toggle_state` field.
 
 ### Discover UI Structure
 
