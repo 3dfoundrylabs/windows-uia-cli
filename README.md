@@ -30,7 +30,7 @@ This repo includes a `marketplace.json`, so it can be registered as a local mark
 ```json
 {
   "extraKnownMarketplaces": {
-    "3dfl-tools": {
+    "3dfoundrylabs": {
       "source": {
         "source": "directory",
         "path": "<absolute-path-to-this-repo>"
@@ -38,27 +38,27 @@ This repo includes a `marketplace.json`, so it can be registered as a local mark
     }
   },
   "enabledPlugins": {
-    "windows-uia-cli@3dfl-tools": true
+    "windows-uia-cli@3dfoundrylabs": true
   }
 }
 ```
 
-### Option 3: Persistent (via Bitbucket)
+### Option 3: Persistent (via GitHub)
 
-Register the Bitbucket repo as a marketplace source:
+Register the GitHub repo as a marketplace source:
 
 ```json
 {
   "extraKnownMarketplaces": {
-    "3dfl-tools": {
+    "3dfoundrylabs": {
       "source": {
         "source": "url",
-        "url": "https://bitbucket.org/3dfl/windows-uia-cli.git"
+        "url": "https://github.com/3dfoundrylabs/windows-uia-cli.git"
       }
     }
   },
   "enabledPlugins": {
-    "windows-uia-cli@3dfl-tools": true
+    "windows-uia-cli@3dfoundrylabs": true
   }
 }
 ```
@@ -66,8 +66,8 @@ Register the Bitbucket repo as a marketplace source:
 Or interactively:
 
 ```
-/plugin marketplace add https://bitbucket.org/3dfl/windows-uia-cli.git
-/plugin install windows-uia-cli@3dfl-tools
+/plugin marketplace add https://github.com/3dfoundrylabs/windows-uia-cli.git
+/plugin install windows-uia-cli@3dfoundrylabs
 ```
 
 After installation, the skill appears as `windows-uia-cli:windows-ui-automation` and is auto-discovered by agents.
@@ -93,11 +93,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\skills\windows-ui-automati
 | `list_windows` | List all top-level windows |
 | `find_window` | Find a window by exact title |
 | `tree_walk` | Walk UI element tree (supports `type_filter`, `max_depth`) |
-| `find_elements` | Search elements by `type`, `name`, `name_contains`, `auto_id`, `class_name` |
+| `find_elements` | Search elements by `type`, `name`, `name_contains`, `auto_id`, `auto_id_contains`, `class_name` |
+| `click_element` | Find and click an element in one call (uses fast UIA FindFirst) |
 | `click` | Click at screen coordinates (supports `double`) |
 | `type` | Send keystrokes (SendKeys syntax) |
 | `set_value` | Set slider/input values via UIA patterns |
-| `screenshot` | Capture screen to PNG file |
+| `toggle` | Toggle checkboxes/toggle buttons via TogglePattern |
+| `screenshot` | Capture full screen or a specific window to PNG |
 | `quit` | Shut down the server |
 
 See [skills/windows-ui-automation/references/commands.md](skills/windows-ui-automation/references/commands.md) for the full protocol reference with request/response examples.
@@ -105,3 +107,7 @@ See [skills/windows-ui-automation/references/commands.md](skills/windows-ui-auto
 ## Architecture
 
 On the first CLI call, `uia_cli.ps1` spawns `uia_server.ps1` as a hidden background process. The server loads .NET `UIAutomationClient` and `UIAutomationTypes` assemblies once, then listens on a named pipe. Each CLI invocation connects to the pipe, sends a JSON command, reads the JSON response, and disconnects. The server stays resident so assembly loading cost (~1s) is paid only once — subsequent calls complete in ~5ms. A PID file in `%TEMP%` tracks the server process for auto-restart if it dies.
+
+## License
+
+[MIT](LICENSE)

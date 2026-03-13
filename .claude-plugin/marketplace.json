@@ -1,7 +1,8 @@
 {
-  "name": "3dfl-tools",
+  "name": "3dfoundrylabs",
   "owner": {
-    "name": "3dfl"
+    "name": "3D Foundry Labs",
+    "url": "https://3dfoundry.ai"
   },
   "plugins": [
     {

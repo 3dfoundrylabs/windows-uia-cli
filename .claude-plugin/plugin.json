@@ -2,6 +2,6 @@
   "name": "windows-uia-cli",
   "version": "0.2.0",
   "description": "Zero-dependency Windows UI automation via persistent PowerShell UIA server",
-  "author": { "name": "3dfl" },
-  "repository": "https://bitbucket.org/3dfl/windows-uia-cli"
+  "author": { "name": "3D Foundry Labs", "url": "https://3dfoundry.ai" },
+  "repository": "https://github.com/3dfoundrylabs/windows-uia-cli"
 }
