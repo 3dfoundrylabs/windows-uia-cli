@@ -19,7 +19,7 @@ $UIA '{"cmd":"ping"}'
 
 Then use `$UIA '{"cmd":"..."}'` for all subsequent calls.
 
-The CLI auto-starts the UIA server on the first call (takes ~1 second for .NET assembly loading). Subsequent calls reuse the running server and complete in ~5ms.
+The CLI auto-starts the UIA server on the first call (takes ~1 second for .NET assembly loading). Subsequent calls reuse the running server — server-side execution completes in 2–30ms, with total round-trip of ~600ms due to PowerShell process startup overhead. This can be further improved with command batching.
 
 All commands return JSON with an `"ok": true/false` field. On failure, an `"error"` string is included.
 

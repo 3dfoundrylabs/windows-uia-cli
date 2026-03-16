@@ -108,7 +108,7 @@ See [skills/windows-ui-automation/references/commands.md](skills/windows-ui-auto
 
 ## Architecture
 
-On the first CLI call, `uia_cli.ps1` spawns `uia_server.ps1` as a hidden background process. The server loads .NET `UIAutomationClient` and `UIAutomationTypes` assemblies once, then listens on a named pipe. Each CLI invocation connects to the pipe, sends a JSON command, reads the JSON response, and disconnects. The server stays resident so assembly loading cost (~1s) is paid only once — subsequent calls complete in ~5ms. A PID file in `%TEMP%` tracks the server process for auto-restart if it dies.
+On the first CLI call, `uia_cli.ps1` spawns `uia_server.ps1` as a hidden background process. The server loads .NET `UIAutomationClient` and `UIAutomationTypes` assemblies once, then listens on a named pipe. Each CLI invocation connects to the pipe, sends a JSON command, reads the JSON response, and disconnects. The server stays resident so assembly loading cost (~1s) is paid only once — server-side execution for most operations completes in 2–30ms. Total round-trip per CLI call is ~600ms, dominated by PowerShell process startup overhead. This can be further improved with command batching. A PID file in `%TEMP%` tracks the server process for auto-restart if it dies.
 
 ## License
 
