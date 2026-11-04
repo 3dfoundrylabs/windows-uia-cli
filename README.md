@@ -113,3 +113,9 @@ On the first CLI call, `uia_cli.ps1` spawns `uia_server.ps1` as a hidden backgro
 ## License
 
 [MIT](LICENSE)
+
+## About
+
+Built and maintained by [3D Foundry Labs](https://3dfoundry.ai), a bespoke R&D studio in Haifa, Israel, building custom AI, agentic workflows, computer vision and 3D software.
+
+Questions or custom agentic tooling: contact@3dfoundry.ai
