@@ -1,6 +1,6 @@
 ---
 name: windows-ui-automation
-description: Interact with Windows desktop UI — click, type, find elements, read UI trees, take screenshots, set values. Uses a persistent PowerShell UIA server with zero dependencies.
+description: Interact with Windows desktop UI — click, drag and drop (within or across apps), type, find elements, read UI trees, take screenshots, set values. Uses a persistent PowerShell UIA server with zero dependencies.
 ---
 
 # Windows UI Automation Skill
@@ -84,6 +84,36 @@ Accepts all `find_elements` filters plus `offset_x`/`offset_y` (relative to cent
 $UIA '{"cmd":"click","args":{"x":500,"y":300}}'
 $UIA '{"cmd":"click","args":{"x":500,"y":300,"double":true}}'
 ```
+
+### drag — Real Mouse Drag-and-Drop (same or different apps)
+
+UIA has no API that performs a drag, so `drag` locates each endpoint with UIA and then drives the real mouse with `SendInput` (button down, past the system drag threshold, smooth moves, hover, release). This works for OLE drag-and-drop (File Explorer, WinForms/WPF), Chromium/WebView2/Electron HTML5 drag, list reordering and splitters. Source and target can be in the same window, two windows of one app, or two different apps.
+
+Each endpoint is either an element (`window` + the same filters as `click_element`, plus optional `window_class` / `window_pid` to pick between windows with the same title, and `offset_x` / `offset_y`) or raw `x` / `y`:
+
+```bash
+# (a) A file from a File Explorer window into another app
+$UIA '{"cmd":"drag","args":{"source":{"window":"Reports","window_class":"CabinetWClass","type":"ListItem","name":"q3.pdf"},"target":{"window":"My App","auto_id":"dropZone"}}}'
+
+# (b) Between two windows of one app
+$UIA '{"cmd":"drag","args":{"source":{"window":"Inbox - My App","type":"ListItem","name_contains":"Invoice"},"target":{"window":"Archive - My App","type":"Tree","name":"Folders"}}}'
+
+# (c) Ctrl held during the drag (copy instead of move)
+$UIA '{"cmd":"drag","args":{"source":{"window":"My App","type":"ListItem","name":"Item 1"},"target":{"window":"My App","auto_id":"rightList"},"modifiers":["ctrl"]}}'
+
+# Check the endpoints without touching the mouse
+$UIA '{"cmd":"drag","args":{"source":{...},"target":{...},"dry_run":true}}'
+```
+
+Options: `modifiers` (`["ctrl"]`, `["shift"]`, both), `steps` (default 20), `step_delay_ms` (default 15), `hold_ms` hover before release (default 150), `dry_run`. Raw `x`/`y` endpoints take the process of the other (element) endpoint; a drag between two raw points needs `expect_source_pid` and `expect_target_pid`, which can also override the expected process of either endpoint.
+
+**What the checks guarantee** (they make the drag land where you said, and abort otherwise):
+- Before button-down, the source window is activated, and both the foreground window and the top-level window under the pointer must be the named source window (same process when given by pid).
+- Before release, the top-level window under the pointer must be the named target window (or the expected target process). Another window covering either point aborts the drag.
+- Element rects are re-read right before they are used; the drag refuses to start if the left button is already down.
+- On any abort the drag is cancelled with Escape (only when the source/target app owns the foreground), and the mouse button and any modifier keys are always released.
+
+**Only drag between windows the user asked you to use.** A drop can move, copy or delete real data (dragging files moves them by default within one drive), so confirm the exact source and target with the user, use `dry_run` first when unsure, and prefer `modifiers: ["ctrl"]` when a copy is what the user wants.
 
 ### type — Send Keystrokes
 

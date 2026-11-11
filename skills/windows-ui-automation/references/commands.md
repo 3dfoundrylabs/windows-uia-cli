@@ -358,6 +358,89 @@ Find an element by filters and click its center — combines `find_elements` + `
 
 ---
 
+## drag
+
+Drag from a source to a target with the real mouse (`SendInput`). UIA cannot perform a drag itself (DragPattern / DropTargetPattern are read-only), so UIA only locates the endpoints. Works within one window, between windows of one app, and across apps (e.g. a file from File Explorer into another app), for OLE drag-and-drop and Chromium/WebView2 HTML5 drag alike.
+
+**Request (element onto element, Ctrl held for a copy):**
+```json
+{"cmd": "drag", "args": {
+  "source": {"window": "My App", "type": "ListItem", "name": "Item 1"},
+  "target": {"window": "My App", "auto_id": "rightList"},
+  "modifiers": ["ctrl"]
+}}
+```
+
+**Request (file from a File Explorer window into another app):**
+```json
+{"cmd": "drag", "args": {
+  "source": {"window": "Reports", "window_class": "CabinetWClass", "type": "ListItem", "name": "q3.pdf"},
+  "target": {"window": "My App", "auto_id": "dropZone"}
+}}
+```
+
+**Response:**
+```json
+{
+  "ok": true,
+  "time_s": 0.9123,
+  "from": {"x": 412, "y": 300},
+  "to": {"x": 880, "y": 420},
+  "cursor": {"x": 880, "y": 420},
+  "modifiers": ["ctrl"],
+  "steps": 20,
+  "source_pid": 4321,
+  "target_pid": 4321,
+  "source_element": {"name": "Item 1", "type": "ListItem", "auto_id": "", "rect": {"left": 362, "top": 290, "right": 462, "bottom": 310}},
+  "target_element": {"name": "", "type": "List", "auto_id": "rightList", "rect": {"left": 700, "top": 200, "right": 1060, "bottom": 640}}
+}
+```
+
+**Args:**
+| Arg | Type | Required | Default | Description |
+|-----|------|----------|---------|-------------|
+| `source` | object | yes | - | Endpoint (see below) where the button goes down |
+| `target` | object | yes | - | Endpoint where the button is released |
+| `modifiers` | string[] | no | `[]` | `"ctrl"` and/or `"shift"`, held from the start of the drag through the release |
+| `steps` | int | no | 20 | Interpolated moves between source and target (1-200) |
+| `step_delay_ms` | int | no | 15 | Pause after each move (0-200) |
+| `hold_ms` | int | no | 150 | Hover over the target before release (0-5000) |
+| `expect_source_pid` | int | no | source window's process | Process that must own the source window |
+| `expect_target_pid` | int | no | target window's process | Process that must own the target window |
+| `dry_run` | bool | no | false | Resolve endpoints and run the point checks only; no input, no focus change |
+
+**Endpoint object** — either an element or a point:
+| Field | Type | Description |
+|-------|------|-------------|
+| `window` | string | Exact title of the endpoint's top-level window |
+| `window_class` | string | Optional: the window's class (e.g. `CabinetWClass` for File Explorer) when several windows share a title |
+| `window_pid` | int | Optional: the window's process id, same purpose |
+| `type`, `name`, `name_contains`, `auto_id`, `auto_id_contains`, `class_name`, `max_depth` | | Element filters as in `click_element` (at least one is required) |
+| `offset_x`, `offset_y` | int | Offset from the element's center |
+| `x`, `y` | int | Raw screen point instead of `window` + filters |
+
+A raw-point endpoint is checked against the other endpoint's window process; a drag between two raw points needs both `expect_source_pid` and `expect_target_pid`.
+
+**Sequence and safety checks:**
+1. Validate args and resolve both endpoints (each in its own window).
+2. Refuse if the left mouse button is already down.
+3. Activate the source window (`SetForegroundWindow`, then UIA `SetFocus`) and verify the foreground window is the source window.
+4. Re-read the source rect, move there, and verify the top-level window under the pointer is the source window (no other window may cover the point) and the cursor really is there.
+5. Button down, a few small moves past the system drag threshold (`SM_CXDRAG`/`SM_CYDRAG`) toward the target, then modifiers down.
+6. Re-read the target rect, interpolate to it, re-read it again, nudge 1 px and hover `hold_ms`.
+7. Verify the top-level window under the pointer is the target window, then release.
+
+If any check fails the command aborts with `ok: false`, an `error` and the `phase` it reached. Cleanup always runs: modifier keys up, then (only if the drag was in progress and the source/target app owns the foreground) Escape to cancel the drop, then left button up. The thread runs per-monitor DPI aware during the drag so UIA rects and `SendInput` coordinates are both physical pixels.
+
+**Error (another window covers the target):**
+```json
+{"ok": false, "phase": "release", "button_was_down": true, "error": "target: point (880,420) is over a window of notepad (pid 5120), expected MyApp (pid 4321); aborting", "from": {"x": 412, "y": 300}, "to": {"x": 880, "y": 420}, "source_pid": 4321, "target_pid": 4321, "time_s": 0.8812}
+```
+
+**Notes:** Only drag between windows the user asked for: a drop can move, copy or delete real data. Use `dry_run` first when unsure, and `modifiers: ["ctrl"]` when the user wants a copy.
+
+---
+
 ## screenshot
 
 Capture the primary screen to a PNG file.

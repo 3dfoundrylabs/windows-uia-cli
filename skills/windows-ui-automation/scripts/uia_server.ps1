@@ -21,11 +21,6 @@ using System;
 using System.Runtime.InteropServices;
 public class NativeInput {
     [StructLayout(LayoutKind.Sequential)]
-    public struct INPUT {
-        public uint type;
-        public MOUSEINPUT mi;
-    }
-    [StructLayout(LayoutKind.Sequential)]
     public struct MOUSEINPUT {
         public int dx;
         public int dy;
@@ -34,34 +29,179 @@ public class NativeInput {
         public uint time;
         public IntPtr dwExtraInfo;
     }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KEYBDINPUT {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+    [StructLayout(LayoutKind.Explicit)]
+    public struct InputUnion {
+        [FieldOffset(0)] public MOUSEINPUT mi;
+        [FieldOffset(0)] public KEYBDINPUT ki;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct INPUT {
+        public uint type;
+        public InputUnion u;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT {
+        public int X, Y;
+    }
     [DllImport("user32.dll", SetLastError=true)]
     public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
     [DllImport("user32.dll")]
     public static extern bool SetCursorPos(int X, int Y);
+    [DllImport("user32.dll")]
+    public static extern bool GetCursorPos(out POINT p);
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int index);
+    [DllImport("user32.dll")]
+    public static extern uint MapVirtualKey(uint code, uint mapType);
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int vk);
+    [DllImport("user32.dll")]
+    public static extern IntPtr WindowFromPoint(POINT p);
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")]
+    public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr ctx);
 
-    public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
-    public const uint MOUSEEVENTF_LEFTUP   = 0x0004;
+    public const uint INPUT_MOUSE    = 0;
+    public const uint INPUT_KEYBOARD = 1;
+    public const uint MOUSEEVENTF_MOVE        = 0x0001;
+    public const uint MOUSEEVENTF_LEFTDOWN    = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP      = 0x0004;
+    public const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
+    public const uint MOUSEEVENTF_ABSOLUTE    = 0x8000;
+    public const uint KEYEVENTF_KEYUP = 0x0002;
+    public const ushort VK_SHIFT   = 0x10;
+    public const ushort VK_CONTROL = 0x11;
+    public const ushort VK_ESCAPE  = 0x1B;
+    const int SM_CXDRAG = 68, SM_CYDRAG = 69;
+    const int SM_XVIRTUALSCREEN = 76, SM_YVIRTUALSCREEN = 77, SM_CXVIRTUALSCREEN = 78, SM_CYVIRTUALSCREEN = 79;
+    const uint GA_ROOTOWNER = 3;
+
+    static INPUT Mouse(uint flags, int dx, int dy) {
+        INPUT i = new INPUT();
+        i.type = INPUT_MOUSE;
+        i.u.mi.dwFlags = flags;
+        i.u.mi.dx = dx;
+        i.u.mi.dy = dy;
+        return i;
+    }
+
+    static INPUT Key(ushort vk, bool up) {
+        INPUT i = new INPUT();
+        i.type = INPUT_KEYBOARD;
+        i.u.ki.wVk = vk;
+        i.u.ki.wScan = (ushort)MapVirtualKey(vk, 0);
+        i.u.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
+        return i;
+    }
+
+    static uint Send(params INPUT[] inputs) {
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    // Like Send, but throws when the input was blocked (e.g. UIPI: target runs elevated).
+    static void SendChecked(string what, params INPUT[] inputs) {
+        uint n = Send(inputs);
+        if (n != inputs.Length) {
+            throw new InvalidOperationException(what + ": SendInput injected " + n + " of " + inputs.Length +
+                " events (Win32 error " + Marshal.GetLastWin32Error() + "; blocked by UIPI or a secure desktop?)");
+        }
+    }
 
     public static void ClickAt(int x, int y) {
         SetCursorPos(x, y);
         System.Threading.Thread.Sleep(30);
-        INPUT[] inputs = new INPUT[2];
-        inputs[0].type = 0;
-        inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-        inputs[1].type = 0;
-        inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
-        SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+        Send(Mouse(MOUSEEVENTF_LEFTDOWN, 0, 0), Mouse(MOUSEEVENTF_LEFTUP, 0, 0));
     }
 
     public static void DoubleClickAt(int x, int y) {
         SetCursorPos(x, y);
         System.Threading.Thread.Sleep(30);
-        INPUT[] inputs = new INPUT[4];
-        inputs[0].type = 0; inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-        inputs[1].type = 0; inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
-        inputs[2].type = 0; inputs[2].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-        inputs[3].type = 0; inputs[3].mi.dwFlags = MOUSEEVENTF_LEFTUP;
-        SendInput(4, inputs, Marshal.SizeOf(typeof(INPUT)));
+        Send(Mouse(MOUSEEVENTF_LEFTDOWN, 0, 0), Mouse(MOUSEEVENTF_LEFTUP, 0, 0),
+             Mouse(MOUSEEVENTF_LEFTDOWN, 0, 0), Mouse(MOUSEEVENTF_LEFTUP, 0, 0));
+    }
+
+    // ── Drag primitives: separate down / move / up so a caller can hold the button ──
+
+    // Absolute move in virtual-desktop coordinates. Real SendInput moves produce the
+    // WM_MOUSEMOVE stream that OLE DoDragDrop and Chromium/WebView2 drag tracking need.
+    public static void MoveTo(int x, int y) {
+        int left = GetSystemMetrics(SM_XVIRTUALSCREEN), top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int w = GetSystemMetrics(SM_CXVIRTUALSCREEN), h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if (w < 2 || h < 2) throw new InvalidOperationException("virtual screen metrics unavailable");
+        int nx = (int)Math.Round((x - left) * 65535.0 / (w - 1));
+        int ny = (int)Math.Round((y - top) * 65535.0 / (h - 1));
+        SendChecked("mouse move", Mouse(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, nx, ny));
+    }
+
+    public static void MouseDown() { SendChecked("left button down", Mouse(MOUSEEVENTF_LEFTDOWN, 0, 0)); }
+    public static void MouseUp()   { SendChecked("left button up", Mouse(MOUSEEVENTF_LEFTUP, 0, 0)); }
+    public static void KeyDown(ushort vk) { SendChecked("key down", Key(vk, false)); }
+    public static void KeyUp(ushort vk)   { SendChecked("key up", Key(vk, true)); }
+
+    public static bool IsLeftButtonDown() { return (GetAsyncKeyState(0x01) & 0x8000) != 0; }
+    public static int DragThresholdX() { return GetSystemMetrics(SM_CXDRAG); }
+    public static int DragThresholdY() { return GetSystemMetrics(SM_CYDRAG); }
+
+    public static int[] CursorPos() {
+        POINT p;
+        GetCursorPos(out p);
+        return new int[] { p.X, p.Y };
+    }
+
+    static uint RootOwnerPid(IntPtr hwnd) {
+        if (hwnd == IntPtr.Zero) return 0;
+        IntPtr root = GetAncestor(hwnd, GA_ROOTOWNER);
+        if (root == IntPtr.Zero) root = hwnd;
+        uint pid;
+        GetWindowThreadProcessId(root, out pid);
+        return pid;
+    }
+
+    static IntPtr RootOwner(IntPtr hwnd) {
+        if (hwnd == IntPtr.Zero) return IntPtr.Zero;
+        IntPtr root = GetAncestor(hwnd, GA_ROOTOWNER);
+        return root == IntPtr.Zero ? hwnd : root;
+    }
+
+    // Top-level (root owner) window under a screen point; Zero if none. Cross-process
+    // child windows (e.g. WebView2's renderer HWND) resolve to the hosting app's window.
+    public static IntPtr RootOwnerAt(int x, int y) {
+        POINT p; p.X = x; p.Y = y;
+        return RootOwner(WindowFromPoint(p));
+    }
+
+    // PID owning the root owner window under a screen point; 0 if none.
+    public static uint RootOwnerPidAt(int x, int y) {
+        POINT p; p.X = x; p.Y = y;
+        return RootOwnerPid(WindowFromPoint(p));
+    }
+
+    public static IntPtr ForegroundRoot() { return RootOwner(GetForegroundWindow()); }
+    public static uint ForegroundPid() { return RootOwnerPid(GetForegroundWindow()); }
+
+    // Per-monitor-v2 DPI awareness for the calling thread, so UIA rects, metrics and
+    // SendInput all use physical pixels. Returns the previous context (Zero if unsupported).
+    public static IntPtr EnterPerMonitorDpi() {
+        try { return SetThreadDpiAwarenessContext(new IntPtr(-4)); }
+        catch (EntryPointNotFoundException) { return IntPtr.Zero; }
+    }
+    public static void RestoreDpi(IntPtr previous) {
+        if (previous != IntPtr.Zero) SetThreadDpiAwarenessContext(previous);
     }
 
     // PrintWindow for window-scoped screenshots
@@ -457,6 +597,312 @@ function Cmd-ClickElement($a) {
     }
 }
 
+# ── drag: UIA locates the endpoints, real SendInput performs the drag ──
+# UIA has no API that performs a drag (DragPattern/DropTargetPattern are read-only), so
+# this resolves each endpoint (element in its own window, or raw x/y), then drives the
+# real mouse: down at the source, past the system drag threshold, interpolated moves to
+# the target, hover, release. Source and target may be in different processes (e.g. a
+# file from File Explorer into another app).
+
+function Find-DragWindow($ep, [string]$label) {
+    # Exact title, optionally narrowed by window class and/or owning process.
+    $cond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, [string]$ep.window
+    )
+    $wins = @($uiaRoot.FindAll([System.Windows.Automation.TreeScope]::Children, $cond) | Where-Object {
+        (-not $ep.window_class -or $_.Current.ClassName -eq $ep.window_class) -and
+        ($null -eq $ep.window_pid -or $_.Current.ProcessId -eq [int]$ep.window_pid)
+    })
+    if ($wins.Count -eq 0) { throw "${label}: window '$($ep.window)' not found" }
+    if ($wins.Count -gt 1) {
+        throw "${label}: $($wins.Count) windows titled '$($ep.window)' match; narrow with window_class / window_pid"
+    }
+    return $wins[0]
+}
+
+function Resolve-DragEndpoint($ep, [string]$label) {
+    if (-not $ep) { throw "'$label' is required (window + element filters, or x and y)" }
+    $hasX = $null -ne $ep.x
+    $hasY = $null -ne $ep.y
+    if ($ep.window) {
+        if ($hasX -or $hasY) { throw "${label}: give either window + element filters or x/y, not both" }
+        if (-not ($ep.name -or $ep.name_contains -or $ep.auto_id -or $ep.auto_id_contains -or $ep.type -or $ep.class_name)) {
+            throw "${label}: needs at least one element filter (name, name_contains, auto_id, auto_id_contains, type, class_name)"
+        }
+        $win = Find-DragWindow $ep $label
+        $el  = Find-ElementFast $win $ep
+        if (-not $el) { throw "${label}: element not found in window '$($ep.window)'" }
+        # The endpoint's process is the top-level window's: an element inside a hosted
+        # control (e.g. WebView2 content) can report a child process's id instead.
+        return @{
+            label    = $label
+            window   = $win
+            hwnd     = [IntPtr]$win.Current.NativeWindowHandle
+            element  = $el
+            pid      = [int]$win.Current.ProcessId
+            offset_x = if ($ep.offset_x) { [int]$ep.offset_x } else { 0 }
+            offset_y = if ($ep.offset_y) { [int]$ep.offset_y } else { 0 }
+        }
+    }
+    if (-not ($hasX -and $hasY)) { throw "${label}: needs either 'window' + element filters, or both 'x' and 'y'" }
+    return @{ label = $label; window = $null; hwnd = [IntPtr]::Zero; element = $null; pid = $null; x = [int]$ep.x; y = [int]$ep.y }
+}
+
+# Live re-read of an endpoint's screen point (element rects can move between steps).
+function Get-DragPoint($r) {
+    if (-not $r.element) { return @{ x = $r.x; y = $r.y } }
+    $rect = $r.element.Current.BoundingRectangle
+    if ($rect.IsEmpty -or $rect.Width -le 0 -or $rect.Height -le 0) {
+        throw "$($r.label): element has no on-screen rectangle (offscreen or gone)"
+    }
+    return @{
+        x = [int](($rect.Left + $rect.Right) / 2) + $r.offset_x
+        y = [int](($rect.Top + $rect.Bottom) / 2) + $r.offset_y
+    }
+}
+
+function Describe-Pid([uint32]$procId) {
+    if ($procId -eq 0) { return 'no window' }
+    $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
+    if ($p) { return "$($p.ProcessName) (pid $procId)" }
+    return "pid $procId"
+}
+
+# The top-level window under the point must belong to the expected process and, when the
+# endpoint names a window, be that very window (no other window may cover the point).
+function Test-PointOwner($pt, [int]$expectedPid, [IntPtr]$expectedHwnd) {
+    $actual = [NativeInput]::RootOwnerPidAt($pt.x, $pt.y)
+    if ($actual -ne $expectedPid) {
+        return "point ($($pt.x),$($pt.y)) is over a window of $(Describe-Pid $actual), expected $(Describe-Pid $expectedPid)"
+    }
+    if ($expectedHwnd -ne [IntPtr]::Zero) {
+        $root = [NativeInput]::RootOwnerAt($pt.x, $pt.y)
+        if ($root -ne $expectedHwnd) {
+            return "point ($($pt.x),$($pt.y)) is over another window (0x$($root.ToString('X'))) of the same process, not the named window (0x$($expectedHwnd.ToString('X')))"
+        }
+    }
+    return $null
+}
+
+function Assert-PointOwner($pt, [int]$expectedPid, [IntPtr]$expectedHwnd, [string]$what) {
+    $problem = Test-PointOwner $pt $expectedPid $expectedHwnd
+    if ($problem) { throw "${what}: $problem; aborting" }
+}
+
+function Test-SourceForeground([int]$srcPid, [IntPtr]$srcHwnd) {
+    if ([NativeInput]::ForegroundPid() -ne $srcPid) { return $false }
+    if ($srcHwnd -ne [IntPtr]::Zero -and [NativeInput]::ForegroundRoot() -ne $srcHwnd) { return $false }
+    return $true
+}
+
+function Trim-Element($el) {
+    if (-not $el) { return $null }
+    return @{
+        name    = $el.Current.Name
+        type    = $el.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
+        auto_id = $el.Current.AutomationId
+        rect    = Rect-To-Hash $el.Current.BoundingRectangle
+    }
+}
+
+function Cmd-Drag($a) {
+    $stopwatch.Restart()
+    $oldDpi   = [NativeInput]::EnterPerMonitorDpi()
+    $pressed  = [System.Collections.Generic.List[uint16]]::new()
+    $downSent = $false
+    $done     = $false
+    $phase    = 'validate'
+    $from = $null; $to = $null; $srcPid = $null; $dstPid = $null
+    $result = $null
+    try {
+        # ── Validate args ──
+        $mods = @()
+        foreach ($m in @($a.modifiers)) {
+            if ($null -eq $m) { continue }
+            switch (([string]$m).ToLowerInvariant()) {
+                { $_ -in 'ctrl', 'control' } { $mods += [NativeInput]::VK_CONTROL }
+                'shift'                      { $mods += [NativeInput]::VK_SHIFT }
+                default { throw "unknown modifier '$m' (allowed: ctrl, shift)" }
+            }
+        }
+        $steps   = if ($null -ne $a.steps)         { [int]$a.steps }         else { 20 }
+        $delayMs = if ($null -ne $a.step_delay_ms) { [int]$a.step_delay_ms } else { 15 }
+        $holdMs  = if ($null -ne $a.hold_ms)       { [int]$a.hold_ms }       else { 150 }
+        if ($steps -lt 1 -or $steps -gt 200)     { throw "'steps' must be 1..200" }
+        if ($delayMs -lt 0 -or $delayMs -gt 200) { throw "'step_delay_ms' must be 0..200" }
+        if ($holdMs -lt 0 -or $holdMs -gt 5000)  { throw "'hold_ms' must be 0..5000" }
+
+        $src = Resolve-DragEndpoint $a.source 'source'
+        $dst = Resolve-DragEndpoint $a.target 'target'
+
+        # Expected owner per endpoint (source and target may be different processes):
+        # explicit expect_*_pid, else the endpoint's own top-level window (pid + hwnd),
+        # else (raw x/y) the other endpoint's window process. A drag never runs without one.
+        $srcHwnd = [IntPtr]::Zero; $dstHwnd = [IntPtr]::Zero
+        if ($null -ne $a.expect_source_pid) { $srcPid = [int]$a.expect_source_pid }
+        elseif ($src.pid) { $srcPid = $src.pid; $srcHwnd = $src.hwnd }
+        else { $srcPid = $dst.pid }
+        if ($null -ne $a.expect_target_pid) { $dstPid = [int]$a.expect_target_pid }
+        elseif ($dst.pid) { $dstPid = $dst.pid; $dstHwnd = $dst.hwnd }
+        else { $dstPid = $src.pid }
+        if (-not $srcPid -or -not $dstPid) {
+            throw "a drag between two raw x/y points needs 'expect_source_pid' and 'expect_target_pid'"
+        }
+
+        $from = Get-DragPoint $src
+        $to   = Get-DragPoint $dst
+
+        if ($a.dry_run) {
+            # Resolve and check only: no input, no focus change.
+            $srcProblem = Test-PointOwner $from $srcPid $srcHwnd
+            $dstProblem = Test-PointOwner $to $dstPid $dstHwnd
+            $result = @{
+                ok                = (-not $srcProblem) -and (-not $dstProblem)
+                dry_run           = $true
+                from              = $from
+                to                = $to
+                source_pid        = $srcPid
+                target_pid        = $dstPid
+                source_check      = if ($srcProblem) { $srcProblem } else { 'ok' }
+                target_check      = if ($dstProblem) { $dstProblem } else { 'ok' }
+                source_foreground = Test-SourceForeground $srcPid $srcHwnd
+                source_element    = Trim-Element $src.element
+                target_element    = Trim-Element $dst.element
+            }
+            if (-not $result.ok) { $result.error = 'an endpoint is covered by a window the caller did not name' }
+            $done = $true
+        } else {
+
+        if ([NativeInput]::IsLeftButtonDown()) {
+            throw 'left mouse button is already down (another drag or the user is active); aborting'
+        }
+
+        # ── Source must be foreground: activate the source window, then verify ──
+        $phase = 'activate'
+        if (-not (Test-SourceForeground $srcPid $srcHwnd) -and $src.window) {
+            if (-not [NativeInput]::SetForegroundWindow($src.hwnd)) {
+                try { $src.window.SetFocus() } catch {}
+            }
+            Start-Sleep -Milliseconds 150
+        }
+        if (-not (Test-SourceForeground $srcPid $srcHwnd)) {
+            throw "foreground window belongs to $(Describe-Pid ([NativeInput]::ForegroundPid())), not the source window of $(Describe-Pid $srcPid); activate the source window first"
+        }
+
+        # ── Press at the source (rect re-read right before use) ──
+        $phase = 'press'
+        $from = Get-DragPoint $src
+        Assert-PointOwner $from $srcPid $srcHwnd 'source'
+        [NativeInput]::MoveTo($from.x, $from.y)
+        Start-Sleep -Milliseconds 60
+        $from = Get-DragPoint $src
+        Assert-PointOwner $from $srcPid $srcHwnd 'source'
+        $c = [NativeInput]::CursorPos()
+        if ([math]::Abs($c[0] - $from.x) -gt 1 -or [math]::Abs($c[1] - $from.y) -gt 1) {
+            throw "cursor is at ($($c[0]),$($c[1])), not the source point ($($from.x),$($from.y)); the source moved or the pointer is in use"
+        }
+        if (-not (Test-SourceForeground $srcPid $srcHwnd)) { throw 'source window lost the foreground before button-down; aborting' }
+        $downSent = $true
+        [NativeInput]::MouseDown()
+        Start-Sleep -Milliseconds 80
+
+        # ── Cross the system drag threshold in small moves toward the target ──
+        $phase = 'start-drag'
+        $to = Get-DragPoint $dst
+        $dx = $to.x - $from.x; $dy = $to.y - $from.y
+        $len = [math]::Sqrt($dx * $dx + $dy * $dy)
+        if ($len -lt 1) { $ux = 1.0; $uy = 0.0 } else { $ux = $dx / $len; $uy = $dy / $len }
+        $thresh = [math]::Max([NativeInput]::DragThresholdX(), [NativeInput]::DragThresholdY()) * 2 + 2
+        $cur = $from
+        for ($i = 1; $i -le 3; $i++) {
+            $cur = @{ x = [int][math]::Round($from.x + $ux * $thresh * $i / 3); y = [int][math]::Round($from.y + $uy * $thresh * $i / 3) }
+            [NativeInput]::MoveTo($cur.x, $cur.y)
+            Start-Sleep -Milliseconds ([math]::Max($delayMs, 20))
+        }
+
+        # Modifiers go down once the drag is under way (drop effect is read during the drag
+        # and at release; pressing them before button-down would change the click instead).
+        foreach ($vk in $mods) { $pressed.Add($vk); [NativeInput]::KeyDown($vk) }
+        if ($mods.Count) { Start-Sleep -Milliseconds 40 }
+
+        # ── Interpolate to the target (rect re-read right before use) ──
+        $phase = 'move'
+        $to = Get-DragPoint $dst
+        $start = $cur
+        for ($i = 1; $i -le $steps; $i++) {
+            $px = [int][math]::Round($start.x + ($to.x - $start.x) * $i / $steps)
+            $py = [int][math]::Round($start.y + ($to.y - $start.y) * $i / $steps)
+            [NativeInput]::MoveTo($px, $py)
+            Start-Sleep -Milliseconds $delayMs
+        }
+
+        # ── Hover: re-read the target, nudge so the drop target sees a fresh drag-over ──
+        $phase = 'hover'
+        $to = Get-DragPoint $dst
+        [NativeInput]::MoveTo($to.x + 1, $to.y)
+        Start-Sleep -Milliseconds ([math]::Max($delayMs, 20))
+        [NativeInput]::MoveTo($to.x, $to.y)
+        Start-Sleep -Milliseconds $holdMs
+
+        # ── Release only over the target's process ──
+        $phase = 'release'
+        Assert-PointOwner $to $dstPid $dstHwnd 'target'
+        [NativeInput]::MouseUp()
+        $downSent = $false
+        $done = $true
+
+        $cursor = [NativeInput]::CursorPos()
+        $result = @{
+            ok             = $true
+            from           = $from
+            to             = $to
+            cursor         = @{ x = $cursor[0]; y = $cursor[1] }
+            modifiers      = @($a.modifiers | Where-Object { $_ })
+            steps          = $steps
+            source_pid     = $srcPid
+            target_pid     = $dstPid
+            source_element = Trim-Element $src.element
+            target_element = Trim-Element $dst.element
+        }
+        }  # end live (non-dry-run) drag
+    } catch {
+        $result = @{
+            ok     = $false
+            error  = $_.Exception.Message
+            phase  = $phase
+            from   = $from
+            to     = $to
+            source_pid = $srcPid
+            target_pid = $dstPid
+            button_was_down = $downSent
+        }
+    } finally {
+        $cleanupErrors = @()
+        # Modifiers up first: Escape with Ctrl held would be Ctrl+Esc (Start menu).
+        for ($i = $pressed.Count - 1; $i -ge 0; $i--) {
+            try { [NativeInput]::KeyUp($pressed[$i]) } catch { $cleanupErrors += $_.Exception.Message }
+        }
+        if ($downSent) {
+            # Aborted mid-drag: cancel the OLE drag with Escape before releasing, so the
+            # button-up does not drop — but only if our source/target process owns the
+            # foreground (never send keys to a window the caller did not target).
+            $fg = [NativeInput]::ForegroundPid()
+            if (-not $done -and ($fg -eq $srcPid -or $fg -eq $dstPid)) {
+                try {
+                    [NativeInput]::KeyDown([NativeInput]::VK_ESCAPE)
+                    [NativeInput]::KeyUp([NativeInput]::VK_ESCAPE)
+                    Start-Sleep -Milliseconds 50
+                } catch { $cleanupErrors += $_.Exception.Message }
+            }
+            try { [NativeInput]::MouseUp() } catch { $cleanupErrors += $_.Exception.Message }
+        }
+        [NativeInput]::RestoreDpi($oldDpi)
+        if ($result -and $cleanupErrors.Count) { $result.cleanup_errors = $cleanupErrors }
+    }
+    if ($result) { $result.time_s = [math]::Round($stopwatch.Elapsed.TotalSeconds, 4) }
+    return $result
+}
+
 function Cmd-Toggle($a) {
     if (-not $a.window) { return @{ ok = $false; error = "'window' is required" } }
     $maxDepth = if ($a.max_depth) { $a.max_depth } else { 15 }
@@ -670,6 +1116,7 @@ try {
                     'set_value'     { $response = Cmd-SetValue $a }
                     'click'         { $response = Cmd-Click $a }
                     'click_element' { $response = Cmd-ClickElement $a }
+                    'drag'          { $response = Cmd-Drag $a }
                     'toggle'        { $response = Cmd-Toggle $a }
                     'screenshot'    { $response = Cmd-Screenshot $a }
                     'type'          { $response = Cmd-Type $a }
