@@ -648,17 +648,41 @@ function Resolve-DragEndpoint($ep, [string]$label) {
     return @{ label = $label; window = $null; hwnd = [IntPtr]::Zero; element = $null; pid = $null; x = [int]$ep.x; y = [int]$ep.y }
 }
 
-# Live re-read of an endpoint's screen point (element rects can move between steps).
+# Live re-read of an endpoint's press/release point (element rects can move between steps).
+# The point is the element's center + offset, and it must lie in the VISIBLE part of the
+# element (its rect clipped to its top-level window's rect): a wide row in a narrow window
+# can have its center outside the window. Without an offset, the center of the visible part
+# is used instead (clamped = $true); with an offset, a point outside the visible part throws.
+# Dry-run and the live drag both use this, so they evaluate the same point.
 function Get-DragPoint($r) {
     if (-not $r.element) { return @{ x = $r.x; y = $r.y } }
     $rect = $r.element.Current.BoundingRectangle
     if ($rect.IsEmpty -or $rect.Width -le 0 -or $rect.Height -le 0) {
         throw "$($r.label): element has no on-screen rectangle (offscreen or gone)"
     }
-    return @{
-        x = [int](($rect.Left + $rect.Right) / 2) + $r.offset_x
-        y = [int](($rect.Top + $rect.Bottom) / 2) + $r.offset_y
+    $wr = New-Object NativeInput+RECT
+    if (-not [NativeInput]::GetWindowRect($r.hwnd, [ref]$wr)) {
+        throw "$($r.label): cannot read the window rectangle (window closed?)"
     }
+    $vl = [math]::Max([int]$rect.Left, $wr.Left);   $vt = [math]::Max([int]$rect.Top, $wr.Top)
+    $vr = [math]::Min([int]$rect.Right, $wr.Right); $vb = [math]::Min([int]$rect.Bottom, $wr.Bottom)
+    if ($vr - $vl -lt 1 -or $vb - $vt -lt 1) {
+        throw "$($r.label): element lies entirely outside its window (scroll it into view)"
+    }
+    $x = [int](($rect.Left + $rect.Right) / 2) + $r.offset_x
+    $y = [int](($rect.Top + $rect.Bottom) / 2) + $r.offset_y
+    $inside = $x -ge $vl -and $x -lt $vr -and $y -ge $vt -and $y -lt $vb
+    if ($inside) { return @{ x = $x; y = $y; clamped = $false } }
+    if ($r.offset_x -ne 0 -or $r.offset_y -ne 0) {
+        throw "$($r.label): point ($x,$y) (element center + offset) is outside the element's visible part [$vl,$vt - $vr,$vb]"
+    }
+    return @{ x = [int](($vl + $vr) / 2); y = [int](($vt + $vb) / 2); clamped = $true }
+}
+
+# Dry-run form of Get-DragPoint: returns @{ point; problem } instead of throwing.
+function Test-DragPoint($r) {
+    try { return @{ point = (Get-DragPoint $r); problem = $null } }
+    catch { return @{ point = $null; problem = $_.Exception.Message } }
 }
 
 function Describe-Pid([uint32]$procId) {
@@ -738,7 +762,11 @@ function Cmd-Drag($a) {
         # Expected owner per endpoint (source and target may be different processes):
         # explicit expect_*_pid, else the endpoint's own top-level window (pid + hwnd),
         # else (raw x/y) the other endpoint's window process. A drag never runs without one.
+        # A raw x/y source must name its process: the drag activates the window under it.
         $srcHwnd = [IntPtr]::Zero; $dstHwnd = [IntPtr]::Zero
+        if (-not $src.element -and $null -eq $a.expect_source_pid) {
+            throw "a raw x/y source needs 'expect_source_pid' (the process whose window is under the point)"
+        }
         if ($null -ne $a.expect_source_pid) { $srcPid = [int]$a.expect_source_pid }
         elseif ($src.pid) { $srcPid = $src.pid; $srcHwnd = $src.hwnd }
         else { $srcPid = $dst.pid }
@@ -749,13 +777,13 @@ function Cmd-Drag($a) {
             throw "a drag between two raw x/y points needs 'expect_source_pid' and 'expect_target_pid'"
         }
 
-        $from = Get-DragPoint $src
-        $to   = Get-DragPoint $dst
-
         if ($a.dry_run) {
-            # Resolve and check only: no input, no focus change.
-            $srcProblem = Test-PointOwner $from $srcPid $srcHwnd
-            $dstProblem = Test-PointOwner $to $dstPid $dstHwnd
+            # Resolve and check only: no input, no focus change. Same points and checks as
+            # the live drag (Get-DragPoint, then the window under each point).
+            $s = Test-DragPoint $src; $d = Test-DragPoint $dst
+            $from = $s.point; $to = $d.point
+            $srcProblem = if ($s.problem) { $s.problem } else { Test-PointOwner $from $srcPid $srcHwnd }
+            $dstProblem = if ($d.problem) { $d.problem } else { Test-PointOwner $to $dstPid $dstHwnd }
             $result = @{
                 ok                = (-not $srcProblem) -and (-not $dstProblem)
                 dry_run           = $true
@@ -769,7 +797,11 @@ function Cmd-Drag($a) {
                 source_element    = Trim-Element $src.element
                 target_element    = Trim-Element $dst.element
             }
-            if (-not $result.ok) { $result.error = 'an endpoint is covered by a window the caller did not name' }
+            if (-not $src.element -and -not $srcProblem) {
+                # Raw source: the window a live drag would activate (checked to be expect_source_pid's).
+                $result.source_window_hwnd = [int64][NativeInput]::RootOwnerAt($from.x, $from.y)
+            }
+            if (-not $result.ok) { $result.error = 'an endpoint check failed (see source_check / target_check)' }
             $done = $true
         } else {
 
@@ -779,9 +811,17 @@ function Cmd-Drag($a) {
 
         # ── Source must be foreground: activate the source window, then verify ──
         $phase = 'activate'
-        if (-not (Test-SourceForeground $srcPid $srcHwnd) -and $src.window) {
-            if (-not [NativeInput]::SetForegroundWindow($src.hwnd)) {
-                try { $src.window.SetFocus() } catch {}
+        $srcWin = $src.window
+        if (-not $src.element) {
+            # Raw source: the top-level window under the point, only if it is expect_source_pid's.
+            $pt = Get-DragPoint $src
+            Assert-PointOwner $pt $srcPid ([IntPtr]::Zero) 'source'
+            $srcHwnd = [NativeInput]::RootOwnerAt($pt.x, $pt.y)
+            try { $srcWin = [System.Windows.Automation.AutomationElement]::FromHandle($srcHwnd) } catch { $srcWin = $null }
+        }
+        if (-not (Test-SourceForeground $srcPid $srcHwnd) -and $srcHwnd -ne [IntPtr]::Zero) {
+            if (-not [NativeInput]::SetForegroundWindow($srcHwnd) -and $srcWin) {
+                try { $srcWin.SetFocus() } catch {}
             }
             Start-Sleep -Milliseconds 150
         }

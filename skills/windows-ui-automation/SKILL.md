@@ -107,7 +107,9 @@ $UIA '{"cmd":"drag","args":{"source":{...},"target":{...},"dry_run":true}}'
 
 In File Explorer's Details view, press on the file name, not the row's center: a blank part of the row starts a rubber-band selection instead of a drag. Use a negative `offset_x` (about `-(row width / 2) + 40`) from the row's `rect`.
 
-Options: `modifiers` (`["ctrl"]`, `["shift"]`, both), `steps` (default 20), `step_delay_ms` (default 15), `hold_ms` hover before release (default 150), `dry_run`. Raw `x`/`y` endpoints take the process of the other (element) endpoint; a drag between two raw points needs `expect_source_pid` and `expect_target_pid`, which can also override the expected process of either endpoint.
+Options: `modifiers` (`["ctrl"]`, `["shift"]`, both), `steps` (default 20), `step_delay_ms` (default 15), `hold_ms` hover before release (default 150), `dry_run`. A raw `x`/`y` source needs `expect_source_pid`: the top-level window under the point must belong to it, and that window is activated like an element source's. A raw `x`/`y` target takes the source's process unless `expect_target_pid` is given (either can override an element endpoint's expected process).
+
+The press/release point is the element's center plus `offset_x`/`offset_y`, and it must lie in the visible part of the element (its rect clipped to its window). Without an offset, a partly visible element (e.g. a wide row in a narrow window) is pressed at the center of its visible part (`clamped: true` in `from`/`to`); with an offset that lands outside the visible part, the drag (and `dry_run`) fails. `dry_run` evaluates exactly the points and checks the live drag uses.
 
 **What the checks guarantee** (they make the drag land where you said, and abort otherwise):
 - Before button-down, the source window is activated, and both the foreground window and the top-level window under the pointer must be the named source window (same process when given by pid).

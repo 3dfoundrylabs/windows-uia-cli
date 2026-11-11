@@ -8,6 +8,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_SKILL_DIR}/scripts
 
 Every response includes `"ok": true` on success or `"ok": false, "error": "..."` on failure.
 
+The server answers one request at a time on a single pipe instance and opens the next instance only after replying, so a request sent right after another can briefly find no pipe; the CLI retries that case (pipe not found) for up to 2 s before failing. Concurrent callers queue.
+
 ---
 
 ## ping
@@ -405,9 +407,9 @@ Drag from a source to a target with the real mouse (`SendInput`). UIA cannot per
 | `steps` | int | no | 20 | Interpolated moves between source and target (1-200) |
 | `step_delay_ms` | int | no | 15 | Pause after each move (0-200) |
 | `hold_ms` | int | no | 150 | Hover over the target before release (0-5000) |
-| `expect_source_pid` | int | no | source window's process | Process that must own the source window |
+| `expect_source_pid` | int | for a raw `x`/`y` source | source window's process | Process that must own the source window |
 | `expect_target_pid` | int | no | target window's process | Process that must own the target window |
-| `dry_run` | bool | no | false | Resolve endpoints and run the point checks only; no input, no focus change |
+| `dry_run` | bool | no | false | Resolve endpoints and run the same point checks as a live drag only; no input, no focus change. For a raw source it also reports `source_window_hwnd`, the window a live drag would activate |
 
 **Endpoint object** — either an element or a point:
 | Field | Type | Description |
@@ -416,15 +418,15 @@ Drag from a source to a target with the real mouse (`SendInput`). UIA cannot per
 | `window_class` | string | Optional: the window's class (e.g. `CabinetWClass` for File Explorer) when several windows share a title |
 | `window_pid` | int | Optional: the window's process id, same purpose |
 | `type`, `name`, `name_contains`, `auto_id`, `auto_id_contains`, `class_name`, `max_depth` | | Element filters as in `click_element` (at least one is required) |
-| `offset_x`, `offset_y` | int | Offset from the element's center |
+| `offset_x`, `offset_y` | int | Offset from the element's center; the point must lie in the element's visible part (rect clipped to its window), or the endpoint fails. Without an offset, a partly visible element uses the center of its visible part (`clamped: true`) |
 | `x`, `y` | int | Raw screen point instead of `window` + filters |
 
-A raw-point endpoint is checked against the other endpoint's window process; a drag between two raw points needs both `expect_source_pid` and `expect_target_pid`.
+A raw-point source needs `expect_source_pid` (refused without it); the top-level window under it must belong to that process and is activated like an element source's window. A raw-point target is checked against `expect_target_pid`, else the source's process.
 
 **Sequence and safety checks:**
 1. Validate args and resolve both endpoints (each in its own window).
 2. Refuse if the left mouse button is already down.
-3. Activate the source window (`SetForegroundWindow`, then UIA `SetFocus`) and verify the foreground window is the source window.
+3. Activate the source window (`SetForegroundWindow`, then UIA `SetFocus`; for a raw source, the top-level window under the point once it is verified to be `expect_source_pid`'s) and verify the foreground window is the source window.
 4. Re-read the source rect, move there, and verify the top-level window under the pointer is the source window (no other window may cover the point) and the cursor really is there.
 5. Button down, a few small moves past the system drag threshold (`SM_CXDRAG`/`SM_CYDRAG`) toward the target, then modifiers down.
 6. Re-read the target rect, interpolate to it, re-read it again, nudge 1 px and hover `hold_ms`.

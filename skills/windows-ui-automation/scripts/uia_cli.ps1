@@ -45,9 +45,25 @@ if ($needStart) {
 
 # --- Send command via named pipe ---
 try {
-    $pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', $pipeName,
-        [System.IO.Pipes.PipeDirection]::InOut)
-    $pipe.Connect(10000)  # 10s timeout for connection
+    # The server serves one request at a time on a single pipe instance and creates the
+    # next instance only after it has answered, so a request sent right after another can
+    # find no pipe for a moment (ERROR_FILE_NOT_FOUND). Retry that case only, for up to 2 s;
+    # a busy-but-existing pipe is waited for by Connect itself (10 s).
+    $deadline = [DateTime]::UtcNow.AddSeconds(2)
+    while ($true) {
+        $pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', $pipeName,
+            [System.IO.Pipes.PipeDirection]::InOut)
+        try {
+            $pipe.Connect(10000)  # 10s timeout for connection
+            break
+        } catch {
+            $pipe.Dispose()
+            $base = $_.Exception.GetBaseException()
+            $notFound = ($base -is [System.IO.FileNotFoundException]) -or ($base.HResult -eq -2147024894)
+            if (-not $notFound -or [DateTime]::UtcNow -ge $deadline) { throw }
+            Start-Sleep -Milliseconds 50
+        }
+    }
 
     $writer = New-Object System.IO.StreamWriter($pipe)
     $writer.AutoFlush = $true
