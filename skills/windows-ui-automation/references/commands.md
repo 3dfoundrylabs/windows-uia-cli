@@ -437,7 +437,7 @@ If any check fails the command aborts with `ok: false`, an `error` and the `phas
 {"ok": false, "phase": "release", "button_was_down": true, "error": "target: point (880,420) is over a window of notepad (pid 5120), expected MyApp (pid 4321); aborting", "from": {"x": 412, "y": 300}, "to": {"x": 880, "y": 420}, "source_pid": 4321, "target_pid": 4321, "time_s": 0.8812}
 ```
 
-**Notes:** Only drag between windows the user asked for: a drop can move, copy or delete real data. Use `dry_run` first when unsure, and `modifiers: ["ctrl"]` when the user wants a copy.
+**Notes:** In File Explorer's Details view, press on the file name (negative `offset_x` toward the row's left edge): the blank middle of a row starts a rubber-band selection, not a drag. WinForms list boxes may surface in UIA only as unnamed panes whose `auto_id` is the HWND; target them by `auto_id` and use `offset_y` for an item. Only drag between windows the user asked for: a drop can move, copy or delete real data. Use `dry_run` first when unsure, and `modifiers: ["ctrl"]` when the user wants a copy.
 
 ---
 

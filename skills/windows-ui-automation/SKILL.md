@@ -105,6 +105,8 @@ $UIA '{"cmd":"drag","args":{"source":{"window":"My App","type":"ListItem","name"
 $UIA '{"cmd":"drag","args":{"source":{...},"target":{...},"dry_run":true}}'
 ```
 
+In File Explorer's Details view, press on the file name, not the row's center: a blank part of the row starts a rubber-band selection instead of a drag. Use a negative `offset_x` (about `-(row width / 2) + 40`) from the row's `rect`.
+
 Options: `modifiers` (`["ctrl"]`, `["shift"]`, both), `steps` (default 20), `step_delay_ms` (default 15), `hold_ms` hover before release (default 150), `dry_run`. Raw `x`/`y` endpoints take the process of the other (element) endpoint; a drag between two raw points needs `expect_source_pid` and `expect_target_pid`, which can also override the expected process of either endpoint.
 
 **What the checks guarantee** (they make the drag land where you said, and abort otherwise):
